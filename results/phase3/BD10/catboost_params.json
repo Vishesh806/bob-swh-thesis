@@ -1,0 +1,19 @@
+{
+  "params": {
+    "learning_rate": 0.026751105887390034,
+    "depth": 4,
+    "l2_leaf_reg": 27.06711980134988,
+    "random_strength": 2.4400767430594628,
+    "bootstrap_type": "Bernoulli",
+    "subsample": 0.6811131602772952,
+    "min_data_in_leaf": 11
+  },
+  "best_iterations": [
+    800,
+    1097,
+    913,
+    545,
+    592
+  ],
+  "n_features": 78
+}

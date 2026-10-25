@@ -1,0 +1,20 @@
+# Phase 1-2
+numpy>=1.26
+pandas>=2.1
+xarray>=2023.6
+netCDF4>=1.6        # reads ERA5 NetCDF-4 files
+scipy>=1.11
+pyarrow>=14
+cdsapi>=0.7         # ERA5 download (new CDS)
+pytest>=7.4
+
+# Phase 3-5
+scikit-learn>=1.4
+statsmodels>=0.14
+lightgbm>=4.3
+catboost>=1.2
+xgboost>=2.0
+optuna>=3.6
+tensorflow>=2.15
+matplotlib>=3.8
+seaborn>=0.13

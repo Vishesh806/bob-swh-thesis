@@ -1,0 +1,63 @@
+{
+  "buoy": "BD10",
+  "target_col": "era5_swh",
+  "features_dir": "/Users/visheshagarwal/Desktop/bob_swh_thesis/data/processed",
+  "out_dir": "/Users/visheshagarwal/Desktop/bob_swh_thesis/results/phase4",
+  "model_dir": "/Users/visheshagarwal/Desktop/bob_swh_thesis/models",
+  "splits": {
+    "train": [
+      "2015-01-01 00:00",
+      "2020-12-31 23:00"
+    ],
+    "val": [
+      "2021-01-01 00:00",
+      "2022-12-31 23:00"
+    ],
+    "test": [
+      "2023-01-01 00:00",
+      "2024-12-31 23:00"
+    ]
+  },
+  "es_days": 366,
+  "horizons_h": [
+    6,
+    12,
+    24,
+    48,
+    72
+  ],
+  "lookback_h": 72,
+  "sequence_stride_h": 3,
+  "input_set": "core",
+  "variants": [
+    "peak",
+    "mse"
+  ],
+  "verbose": 2,
+  "model_config": {
+    "units": 64,
+    "encoder_layers": 1,
+    "bidirectional": true,
+    "attention": true,
+    "dropout": 0.1,
+    "residual": true,
+    "loss": "peak",
+    "peak_quantile": 0.95,
+    "tau": 0.25,
+    "beta": 1.0,
+    "gamma": 4.0,
+    "learning_rate": 0.001,
+    "batch_size": 256,
+    "epochs": 40,
+    "patience": 6,
+    "seed": 42
+  },
+  "peak_threshold_m": 3.09069333076477,
+  "feature_names": [
+    "era5_swh",
+    "era5_u10",
+    "era5_v10",
+    "era5_msl",
+    "era5_mwp"
+  ]
+}

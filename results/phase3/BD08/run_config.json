@@ -1,0 +1,52 @@
+{
+  "buoy": "BD08",
+  "target_col": "era5_swh",
+  "features_dir": "/Users/visheshagarwal/Desktop/bob_swh_thesis/data/processed",
+  "out_dir": "/Users/visheshagarwal/Desktop/bob_swh_thesis/results/phase3",
+  "model_dir": "/Users/visheshagarwal/Desktop/bob_swh_thesis/models",
+  "splits": {
+    "train": [
+      "2015-01-01 00:00",
+      "2020-12-31 23:00"
+    ],
+    "val": [
+      "2021-01-01 00:00",
+      "2022-12-31 23:00"
+    ],
+    "test": [
+      "2023-01-01 00:00",
+      "2024-12-31 23:00"
+    ]
+  },
+  "es_days": 366,
+  "horizons_h": [
+    6,
+    12,
+    24,
+    48,
+    72
+  ],
+  "lookback_h": 72,
+  "lag_cols": [
+    "era5_swh",
+    "era5_tau",
+    "era5_wspd10",
+    "era5_msl"
+  ],
+  "include_buoy_exog": false,
+  "backends": [
+    "lightgbm",
+    "catboost"
+  ],
+  "n_trials": 40,
+  "timeout_s": 900.0,
+  "tune_stride": 3,
+  "per_horizon": false,
+  "max_rounds": 5000,
+  "early_stopping_rounds": 100,
+  "sarimax_orders": null,
+  "sarimax_fit_days": 730,
+  "run_sarimax": true,
+  "seed": 42,
+  "n_jobs": -1
+}
