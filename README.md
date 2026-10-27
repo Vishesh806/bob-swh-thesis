@@ -48,9 +48,26 @@ Full results, significance tests and discussion are in Chapter 5 of the report.
 
 <p align="center"><img src="figures/fig_cyclone_BD08.png" width="720" alt="Forecasts during cyclone Mocha at BD08"></p>
 
+## Interactive dashboard
+
+A Streamlit dashboard (`app/`) presents everything interactively: the data and the sites, the methodology and an
+interactive view of the peak-weighted loss, a leaderboard of all seven models by metric, site and lead time (including
+accuracy rates within ±0.25 m and ±0.5 m), a forecast explorer, the test-period cyclones, extreme-sea scores,
+Diebold–Mariano significance tests, feature importance, LSTM training curves and the Optuna searches.
+
+```bash
+python3 -m venv .venv-app && .venv-app/bin/pip install -r app/requirements.txt
+.venv-app/bin/streamlit run app/streamlit_app.py
+```
+
+It reads only the small data bundle in `app/data/` (about 19 MB, rebuilt with `app/prepare_data.py`), so it deploys on
+its own on [Streamlit Community Cloud](https://share.streamlit.io): repository `Vishesh806/bob-swh-thesis`, branch
+`main`, main file `app/streamlit_app.py`.
+
 ## Repository layout
 
 ```
+app/             Streamlit dashboard and its data bundle
 bobswh/          Python package (one module per pipeline step)
   config.py        paths, sites, splits, QC limits, physical constants
   era5.py          ERA5 download (gridded and time-series) and point extraction

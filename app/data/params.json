@@ -1,0 +1,119 @@
+{
+ "BD08|lightgbm": {
+  "params": {
+   "learning_rate": 0.05898602410432694,
+   "num_leaves": 17,
+   "min_child_samples": 77,
+   "subsample": 0.5852620618436457,
+   "subsample_freq": 1,
+   "colsample_bytree": 0.43903095579116774,
+   "reg_alpha": 3.4671276804481113,
+   "reg_lambda": 4.905556676028766
+  },
+  "best_iterations": [
+   234,
+   151,
+   158,
+   163,
+   448
+  ],
+  "n_features": 78
+ },
+ "BD08|catboost": {
+  "params": {
+   "learning_rate": 0.02490643969382439,
+   "depth": 4,
+   "l2_leaf_reg": 10.249322216924156,
+   "random_strength": 0.7591104805282695,
+   "bootstrap_type": "Bernoulli",
+   "subsample": 0.5610191174223894,
+   "min_data_in_leaf": 10
+  },
+  "best_iterations": [
+   689,
+   751,
+   985,
+   768,
+   482
+  ],
+  "n_features": 78
+ },
+ "BD10|lightgbm": {
+  "params": {
+   "learning_rate": 0.016412956254591965,
+   "num_leaves": 22,
+   "min_child_samples": 34,
+   "subsample": 0.5907752645718561,
+   "subsample_freq": 1,
+   "colsample_bytree": 0.8013046477654543,
+   "reg_alpha": 3.2687313300211885e-07,
+   "reg_lambda": 5.936071857574604
+  },
+  "best_iterations": [
+   557,
+   568,
+   454,
+   301,
+   216
+  ],
+  "n_features": 78
+ },
+ "BD10|catboost": {
+  "params": {
+   "learning_rate": 0.026751105887390034,
+   "depth": 4,
+   "l2_leaf_reg": 27.06711980134988,
+   "random_strength": 2.4400767430594628,
+   "bootstrap_type": "Bernoulli",
+   "subsample": 0.6811131602772952,
+   "min_data_in_leaf": 11
+  },
+  "best_iterations": [
+   800,
+   1097,
+   913,
+   545,
+   592
+  ],
+  "n_features": 78
+ },
+ "BD11|lightgbm": {
+  "params": {
+   "learning_rate": 0.010653923146227286,
+   "num_leaves": 15,
+   "min_child_samples": 14,
+   "subsample": 0.6176936160801798,
+   "subsample_freq": 1,
+   "colsample_bytree": 0.485870927430017,
+   "reg_alpha": 0.000379022202326363,
+   "reg_lambda": 0.21571845204104279
+  },
+  "best_iterations": [
+   2107,
+   1750,
+   303,
+   633,
+   614
+  ],
+  "n_features": 78
+ },
+ "BD11|catboost": {
+  "params": {
+   "learning_rate": 0.03647316284911211,
+   "depth": 6,
+   "l2_leaf_reg": 8.012737503998538,
+   "random_strength": 0.19010245319870356,
+   "bootstrap_type": "Bernoulli",
+   "subsample": 0.6460723242676091,
+   "min_data_in_leaf": 4
+  },
+  "best_iterations": [
+   1077,
+   501,
+   124,
+   199,
+   68
+  ],
+  "n_features": 78
+ }
+}
