@@ -50,7 +50,7 @@ Full results, significance tests and discussion are in Chapter 5 of the report.
 
 ## Interactive dashboard
 
-A Streamlit dashboard (`app/`) presents everything interactively: the data and the sites, the methodology and an
+A Streamlit dashboard (`app/`) presents everything interactively: a **live forecast** for the next 72 h from the latest Open-Meteo data (the trained LightGBM and CatBoost models, with ECMWF's numerical wave forecast for comparison and a replay of recent forecasts), the data and the sites, the methodology and an
 interactive view of the peak-weighted loss, a leaderboard of all seven models by metric, site and lead time (including
 accuracy rates within ±0.25 m and ±0.5 m), a forecast explorer, the test-period cyclones, extreme-sea scores,
 Diebold–Mariano significance tests, feature importance, LSTM training curves and the Optuna searches.
@@ -60,7 +60,7 @@ python3 -m venv .venv-app && .venv-app/bin/pip install -r app/requirements.txt
 .venv-app/bin/streamlit run app/streamlit_app.py
 ```
 
-It reads only the small data bundle in `app/data/` (about 19 MB, rebuilt with `app/prepare_data.py`), so it deploys on
+The live page uses `bobswh/live.py`, which reproduces the stored test forecasts exactly when fed ERA5; `app/validate_live_inputs.py` checks the live inputs against ERA5 (October–December 2024: wave height correlation 0.96; forecast error from 12 h on within 1–4% of the ERA5-driven error). The dashboard reads only `app/data/` and `app/models/` (about 40 MB, rebuilt with `app/prepare_data.py`), so it deploys on
 its own on [Streamlit Community Cloud](https://share.streamlit.io): repository `Vishesh806/bob-swh-thesis`, branch
 `main`, main file `app/streamlit_app.py`.
 

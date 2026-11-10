@@ -69,6 +69,13 @@ def main() -> None:
     shutil.copy(config.PROC_DIR / "era5_node_alignment.csv", OUT / "node_alignment.csv")
     (OUT / "cyclones.json").write_text(json.dumps(TEST_CYCLONES, indent=1))
 
+    # the saved tree models, for the live forecast page
+    models = ROOT / "app" / "models"
+    models.mkdir(exist_ok=True)
+    for b in BUOYS:
+        for m in ("lightgbm", "catboost"):
+            shutil.copy(config.MODEL_DIR / f"{b}_{m}.joblib", models / f"{b}_{m}.joblib")
+
     total = sum(f.stat().st_size for f in OUT.iterdir())
     print(f"wrote {len(list(OUT.iterdir()))} files, {total / 1e6:.1f} MB, to {OUT}")
 

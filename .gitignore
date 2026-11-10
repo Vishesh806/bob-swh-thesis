@@ -13,7 +13,7 @@ __pycache__/
 *.nc
 
 # Trained models and bulky intermediate outputs (re-create with scripts/run_era5_only.sh)
-models/
+/models/
 results/phase4_sensitivity/*/
 results/*/*/predictions.parquet
 results/logs/

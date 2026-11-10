@@ -3,3 +3,8 @@ plotly>=5.24
 pandas>=2.1
 numpy>=1.26
 pyarrow>=14
+# live forecast: the saved tree models (pinned to the versions they were trained with)
+lightgbm==4.7.0
+catboost==1.2.10
+scikit-learn>=1.4
+joblib>=1.3

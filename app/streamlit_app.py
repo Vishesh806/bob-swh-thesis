@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 DATA = Path(__file__).resolve().parent / "data"
+MODEL_DIR = Path(__file__).resolve().parent / "models"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))     # the bobswh package (live forecast only)
 REPO = "https://github.com/Vishesh806/bob-swh-thesis"
 H = [6, 12, 24, 48, 72]
 BUOYS = ["BD08", "BD10", "BD11"]
@@ -147,7 +150,7 @@ def gain(model, ref, h):
 # ---------------------------------------------------------------- sidebar
 st.sidebar.title("🌊 Bay of Bengal Hs forecasting")
 st.sidebar.caption("M.Tech Dual Degree project · IIT Kharagpur\n\nVishesh Bhagwandas Agarwal (22NA30045)\n\nSupervisor: Prof. Swapnadip De Chowdhury")
-PAGES = ["Overview", "Data explorer", "Methodology", "Model leaderboard", "Forecast explorer", "Cyclone case studies",
+PAGES = ["Overview", "Live forecast", "Data explorer", "Methodology", "Model leaderboard", "Forecast explorer", "Cyclone case studies",
          "Extreme seas and peak loss", "Statistical significance", "What the models learned", "About and reproduce"]
 page = st.sidebar.radio("Page", PAGES)
 st.sidebar.divider()
@@ -209,6 +212,179 @@ def page_overview():
         st.info("**Key findings.** The tree models are the most accurate overall; the LSTM ties with them at 72 h. "
                 "The peak-weighted loss misses far fewer extreme seas. Three days ahead, no model foresees a cyclone "
                 "peak from local data alone, which motivates adding forecast winds.")
+
+
+# ---------------------------------------------------------------- live forecast
+SEA_STATE = [(0.1, "Calm (rippled)"), (0.5, "Smooth"), (1.25, "Slight"), (2.5, "Moderate"), (4.0, "Rough"),
+             (6.0, "Very rough"), (9.0, "High"), (14.0, "Very high"), (np.inf, "Phenomenal")]
+
+
+def sea_state(hs: float) -> str:
+    """WMO sea-state description for a significant wave height."""
+    return next(name for top, name in SEA_STATE if hs <= top)
+
+
+@st.cache_resource(show_spinner=False)
+def load_tree_models(buoy: str):
+    from bobswh.trees import DirectMultiStepRegressor
+    return {m: DirectMultiStepRegressor.load(MODEL_DIR / f"{buoy}_{m}.joblib") for m in ("lightgbm", "catboost")}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_live(buoy: str, hour_key: str) -> pd.DataFrame:
+    from bobswh.live import fetch_open_meteo
+    lat, lon, _ = SITES[buoy]
+    return fetch_open_meteo(lat, lon, past_days=52, forecast_days=4)
+
+
+@st.cache_data
+def live_validation():
+    inp = pd.read_csv(DATA / "live_validation_inputs.csv")
+    sk = pd.read_csv(DATA / "live_validation_skill.csv")
+    return inp, sk
+
+
+def page_live():
+    from bobswh.live import latest_origin, live_forecast
+    st.title("Live forecast")
+    st.markdown("Significant wave height for the **next 72 hours**, forecast by the trained LightGBM and CatBoost "
+                "models from the latest hourly data (Open-Meteo: ECMWF operational wind, pressure, temperature, "
+                "waves and SST). Only data up to the forecast time are used, exactly as in training.")
+    c1, c2, c3 = st.columns([0.8, 1.4, 1.4])
+    site = c1.selectbox("Site", BUOYS, key="live_site")
+    chosen = c2.multiselect("Models", ["lightgbm", "catboost"], default=["lightgbm", "catboost"], format_func=lab, key="live_models")
+    back = c3.slider("Forecast made … days ago", 0, 10, 0, key="live_back",
+                     help="0 = a forecast made now. Pick a past day to replay a recent forecast against what then happened.")
+    if not chosen:
+        st.info("Pick at least one model.")
+        return
+    now = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    try:
+        with st.spinner("Fetching the latest data from Open-Meteo…"):
+            raw = fetch_live(site, now.strftime("%Y-%m-%d %H"))
+        origin = latest_origin(raw, now - pd.Timedelta(days=back))
+        models = {m: load_tree_models(site)[m] for m in chosen}
+        fc, x = live_forecast(models, raw, origin)
+    except Exception as e:     # network down, service change, missing data
+        st.error(f"The live forecast could not be made: {e}. Check the internet connection and reload the page; "
+                 "the other pages work offline.")
+        return
+
+    _, sk = live_validation()
+    band = sk[sk.buoy == site].set_index(["model", "horizon_h"])["rmse_live_inputs"]
+    ens = fc.mean(axis=0)                      # mean of the chosen models per lead time
+    hs0 = float(x["era5_swh_lag0h"].iloc[0])
+    thr = D["summary"]["buoys"][site]["peak_threshold_m"]
+    tend24 = float(x["era5_msl_tend24h_lag0h"].iloc[0])
+    ist = pd.Timedelta(hours=5, minutes=30)
+
+    st.caption(f"Forecast made at **{origin:%d %b %Y %H:00} UTC** ({origin + ist:%d %b %H:%M} IST) from data fetched "
+               f"at {now:%H:%M} UTC. {SITES[site][2]} ({SITES[site][0]:.2f}° N, {SITES[site][1]:.2f}° E).")
+    t = st.columns(5)
+    who = ", ".join(lab(m) for m in chosen)
+    t[0].metric(f"Now: {sea_state(hs0).lower()}", f"{hs0:.2f} m", help="Significant wave height at the forecast time")
+    t[1].metric(f"In 24 h: {sea_state(ens[24]).lower()}", f"{ens[24]:.2f} m", f"{ens[24] - hs0:+.2f} m", delta_color="off",
+                help=f"Mean of {who}; change from now")
+    t[2].metric(f"In 72 h: {sea_state(ens[72]).lower()}", f"{ens[72]:.2f} m", f"{ens[72] - hs0:+.2f} m", delta_color="off",
+                help=f"Mean of {who}; change from now")
+    t[3].metric("Pressure, 24 h change", f"{tend24:+.1f} hPa",
+                help="A fall of 3 hPa or more in 24 h is an early sign of a depression")
+    t[4].metric("Rough-sea threshold", f"{thr:.2f} m", help="This site's 95th percentile of Hs, 2015–2019")
+    if float(ens.max()) >= thr:
+        st.warning(f"Rough seas expected: the forecast reaches {float(ens.max()):.1f} m, above this site's 95th percentile ({thr:.2f} m).")
+    if tend24 <= -3:
+        st.warning(f"Pressure has fallen {abs(tend24):.1f} hPa in 24 h, an early sign of a depression. Watch the next forecasts.")
+
+    # chart: recent sea state, the ML forecasts with their error band, and the numerical model for comparison
+    hist = raw.loc[origin - pd.Timedelta(days=5):, "era5_swh"]
+    past = hist[hist.index <= now.floor("1h")]
+    future = hist[hist.index > now.floor("1h")]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=past.index, y=past.values, name="Sea state (ECMWF analysis)", line=dict(color=COLOR["obs"], width=2.5)))
+    if len(future):
+        fig.add_trace(go.Scatter(x=future.index, y=future.values, name="Numerical wave model forecast (ECMWF WAM)",
+                                 line=dict(color="#8f8e88", width=2, dash="dot")))
+    for m in chosen:
+        lead = [0] + H
+        times = [origin + pd.Timedelta(hours=h) for h in lead]
+        vals = [hs0] + [float(fc.loc[m, h]) for h in H]
+        err = [0] + [float(band.get((m, h), np.nan)) for h in H]
+        fig.add_trace(go.Scatter(x=times, y=vals, name=f"{lab(m)} forecast", mode="lines+markers",
+                                 line=dict(color=COLOR[m], width=2.5), marker=dict(size=9),
+                                 error_y=dict(type="data", array=err, visible=True, color=COLOR[m], thickness=1.2, width=5)))
+    fig.add_vline(x=origin, line_dash="dash", line_color="#52514e")
+    fig.add_annotation(x=origin, y=1, yref="paper", text="forecast made", showarrow=False, xanchor="left", yanchor="bottom")
+    if back:
+        fig.add_vline(x=now, line_dash="dot", line_color="#bdbcb6")
+        fig.add_annotation(x=now, y=1, yref="paper", text="now", showarrow=False, xanchor="left", yanchor="bottom")
+    top = max(float(hist.max()), float(ens.max()))
+    if top >= 0.6 * thr:       # only when the sea gets near it; otherwise it would squash a calm sea flat
+        fig.add_hline(y=thr, line_dash="dot", line_color="#d03b3b", annotation_text="rough-sea threshold (q95)",
+                      annotation_position="bottom right")
+    fig.update_layout(height=470, yaxis_title="Significant wave height Hs (m)", xaxis_title="Time (UTC)",
+                      hovermode="x unified", legend=dict(orientation="h", y=-0.18))
+    show(fig, "live_chart")
+    st.caption("Error bars: ±1 RMSE of each model at that lead time when run on these live inputs (Oct–Dec 2024 check, "
+               "below). The 6 h value leans almost entirely on the current wave height; trust 12–72 h more.")
+
+    rows = []
+    for h in H:
+        vt = origin + pd.Timedelta(hours=h)
+        r = {"Lead time": f"+{h} h", "Valid (UTC)": f"{vt:%d %b %H:00}", "Valid (IST)": f"{vt + ist:%d %b %H:%M}"}
+        for m in chosen:
+            r[f"{lab(m)} (m)"] = round(float(fc.loc[m, h]), 2)
+        r["± error (m)"] = round(float(np.nanmean([band.get((m, h), np.nan) for m in chosen])), 2)
+        r["Sea state"] = sea_state(float(ens[h]))
+        num = raw["era5_swh"].get(vt, np.nan)
+        r["ECMWF WAM (m)"] = round(float(num), 2) if pd.notna(num) else None
+        if back and vt <= now:
+            r["What happened (m)"] = round(float(raw["era5_swh"].get(vt, np.nan)), 2)
+        rows.append(r)
+    tab = pd.DataFrame(rows)
+    if back:
+        tab = tab.drop(columns=["ECMWF WAM (m)"])
+    table(tab, hide_index=True)
+
+    with st.expander("Live inputs at the forecast time"):
+        last = raw.loc[origin - pd.Timedelta(days=3):origin]
+        wspd = np.hypot(last["era5_u10"], last["era5_v10"])
+        c1, c2 = st.columns(2)
+        f1 = go.Figure(go.Scatter(x=last.index, y=wspd, line=dict(color="#2a78d6", width=2)))
+        f1.update_layout(height=260, title="Wind speed at 10 m (m/s)")
+        f2 = go.Figure(go.Scatter(x=last.index, y=last["era5_msl"], line=dict(color="#6250d6", width=2)))
+        f2.update_layout(height=260, title="Mean sea-level pressure (hPa)")
+        with c1:
+            show(f1, "live_wind")
+        with c2:
+            show(f2, "live_msl")
+        key = ["era5_swh_lag0h", "era5_swh_tend6h_lag0h", "era5_wspd10_lag0h", "era5_tau_mean24h_lag0h",
+               "era5_msl_lag0h", "era5_msl_tend24h_lag0h", "era5_msl_anom_lag0h", "era5_sst_lag0h", "era5_mwp_lag0h"]
+        key = [k for k in key if k in x.columns]
+        table(pd.DataFrame({"Model input": [pretty_feature(k) for k in key],
+                            "Value": [f"{float(x[k].iloc[0]):.2f}" for k in key]}), hide_index=True)
+
+    with st.expander("How reliable are live inputs? (check against ERA5, Oct–Dec 2024)"):
+        inp, sk2 = live_validation()
+        names = {"era5_swh": "Wave height (m)", "era5_mwp": "Mean wave period (s)", "era5_mwd": "Wave direction (°)",
+                 "era5_sst": "SST (°C)", "era5_msl": "Pressure (hPa)", "era5_t2m": "Air temperature (°C)",
+                 "era5_u10": "Wind u10 (m/s)", "era5_v10": "Wind v10 (m/s)"}
+        a = inp.groupby("variable")[["corr", "bias", "rmse"]].mean().reindex(list(names)).round(3)
+        a.index = [names[v] for v in a.index]
+        a.columns = ["Correlation", "Mean difference", "RMSE"]
+        st.markdown("**Inputs:** Open-Meteo against ERA5 at the three sites (mean).")
+        table(a)
+        s2 = sk2.groupby("horizon_h")[["rmse_era5_inputs", "rmse_live_inputs", "rmse_persistence"]].mean()
+        f3 = go.Figure()
+        for col, name, colr, dash in (("rmse_era5_inputs", "Trees with ERA5 inputs", "#2a78d6", "solid"),
+                                      ("rmse_live_inputs", "Trees with live inputs", "#1baf7a", "solid"),
+                                      ("rmse_persistence", "Persistence", "#8f8e88", "dash")):
+            f3.add_trace(go.Scatter(x=s2.index, y=s2[col], name=name, mode="lines+markers", line=dict(color=colr, width=3, dash=dash)))
+        f3.update_layout(height=320, xaxis=dict(title="Lead time (h)", tickvals=H), yaxis_title="RMSE against ERA5 Hs (m)")
+        show(f3, "live_val")
+        st.caption("From 12 h on, live inputs cost only 1–4% in accuracy and the models still clearly beat persistence. "
+                   "At 6 h they do worse, because the live and ERA5 analyses differ by about 0.16 m in the current wave "
+                   "height. Open-Meteo's mean wave period runs about 1.5 s longer than ERA5's. A live forecast is a "
+                   "demonstration of the trained models on near-real-time data; the validated results are on the other pages.")
 
 
 def page_data():
@@ -611,7 +787,7 @@ tuning limited by a laptop CPU.
             "streamlit run app/streamlit_app.py", language="bash")
 
 
-{"Overview": page_overview, "Data explorer": page_data, "Methodology": page_method, "Model leaderboard": page_leaderboard,
+{"Overview": page_overview, "Live forecast": page_live, "Data explorer": page_data, "Methodology": page_method, "Model leaderboard": page_leaderboard,
  "Forecast explorer": page_forecast, "Cyclone case studies": page_cyclones, "Extreme seas and peak loss": page_peak,
  "Statistical significance": page_significance, "What the models learned": page_inside,
  "About and reproduce": page_about}[page]()
