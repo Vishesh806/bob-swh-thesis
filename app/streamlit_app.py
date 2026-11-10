@@ -20,6 +20,25 @@ import streamlit as st
 DATA = Path(__file__).resolve().parent / "data"
 MODEL_DIR = Path(__file__).resolve().parent / "models"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))     # the bobswh package (live forecast only)
+
+
+def refresh_package() -> None:
+    """Reload bobswh modules whose source changed after they were loaded.
+
+    Streamlit re-runs this script on every interaction but only reloads modules inside app/, so after a git pull
+    (e.g. a redeploy on Streamlit Cloud) the server would keep running the old bobswh code.
+    """
+    import importlib
+    import time
+    for name in ("bobswh.config", "bobswh.features", "bobswh.trees", "bobswh.live"):   # dependencies first
+        mod = sys.modules.get(name)
+        if mod is not None and Path(mod.__file__).stat().st_mtime > getattr(mod, "_app_loaded_at", 0):
+            mod = importlib.reload(mod)
+        if mod is not None:
+            mod._app_loaded_at = time.time()
+
+
+refresh_package()
 REPO = "https://github.com/Vishesh806/bob-swh-thesis"
 H = [6, 12, 24, 48, 72]
 BUOYS = ["BD08", "BD10", "BD11"]
