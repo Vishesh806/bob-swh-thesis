@@ -28,9 +28,9 @@ SITES = {"BD08": (18.15, 89.67, "Northern bay, on the track of most cyclones"),
          "BD11": (13.58, 84.11, "South-western bay, off Andhra Pradesh and Tamil Nadu")}
 MODELS = ["persistence", "climatology", "sarimax", "lightgbm", "catboost", "lstm_mse", "lstm_peak"]
 LEARNED = ["sarimax", "lightgbm", "catboost", "lstm_mse", "lstm_peak"]
-LABEL = {"persistence": "Persistence", "climatology": "Climatology", "sarimax": "ARIMA", "lightgbm": "LightGBM",
+LABEL = {"lgbm_live": "LightGBM (retrained on live data)", "persistence": "Persistence", "climatology": "Climatology", "sarimax": "ARIMA", "lightgbm": "LightGBM",
          "catboost": "CatBoost", "lstm_mse": "Seq2Seq LSTM (MSE)", "lstm_peak": "Seq2Seq LSTM (peak loss)"}
-COLOR = {"lightgbm": "#2a78d6", "catboost": "#eb6834", "lstm_peak": "#1baf7a", "lstm_mse": "#eda100",
+COLOR = {"lgbm_live": "#6250d6", "lightgbm": "#2a78d6", "catboost": "#eb6834", "lstm_peak": "#1baf7a", "lstm_mse": "#eda100",
          "sarimax": "#e87ba4", "persistence": "#8f8e88", "climatology": "#bdbcb6", "obs": "#0b0b0b"}
 DASH = {"persistence": "dash", "climatology": "dot"}
 BLOCKS = [("Fit (training)", "2015-01-01", "2019-12-31", "#cfe0f6"), ("Early stopping", "2020-01-01", "2020-12-31", "#f8d9cb"),
@@ -237,6 +237,13 @@ def fetch_live(buoy: str, hour_key: str) -> pd.DataFrame:
     return fetch_open_meteo(lat, lon, past_days=52, forecast_days=4)
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def fetch_history(buoy: str, start: str, end: str) -> pd.DataFrame:
+    from bobswh.live import fetch_open_meteo_history
+    lat, lon, _ = SITES[buoy]
+    return fetch_open_meteo_history(lat, lon, start, end)
+
+
 @st.cache_data
 def live_validation():
     inp = pd.read_csv(DATA / "live_validation_inputs.csv")
@@ -265,14 +272,22 @@ def page_live():
         origin = latest_origin(raw, now - pd.Timedelta(days=back))
         models = {m: load_tree_models(site)[m] for m in chosen}
         fc, x = live_forecast(models, raw, origin)
+        rt = st.session_state.get("retrained", {}).get(site)
+        shown = list(chosen)
+        if rt is not None and not back:
+            rfc, _ = live_forecast({"lgbm_live": rt["model"]}, raw, origin)
+            fc = pd.concat([fc, rfc])
+            shown.append("lgbm_live")
     except Exception as e:     # network down, service change, missing data
         st.error(f"The live forecast could not be made: {e}. Check the internet connection and reload the page; "
                  "the other pages work offline.")
         return
 
     _, sk = live_validation()
-    band = sk[sk.buoy == site].set_index(["model", "horizon_h"])["rmse_live_inputs"]
-    ens = fc.mean(axis=0)                      # mean of the chosen models per lead time
+    band = sk[sk.buoy == site].set_index(["model", "horizon_h"])["rmse_live_inputs"].to_dict()
+    if rt is not None:
+        band.update({("lgbm_live", h): float(v) for h, v in rt["scores"]["Retrained on live data"].items()})
+    ens = fc.mean(axis=0)                      # mean of the models shown, per lead time
     hs0 = float(x["era5_swh_lag0h"].iloc[0])
     thr = D["summary"]["buoys"][site]["peak_threshold_m"]
     tend24 = float(x["era5_msl_tend24h_lag0h"].iloc[0])
@@ -281,7 +296,7 @@ def page_live():
     st.caption(f"Forecast made at **{origin:%d %b %Y %H:00} UTC** ({origin + ist:%d %b %H:%M} IST) from data fetched "
                f"at {now:%H:%M} UTC. {SITES[site][2]} ({SITES[site][0]:.2f}° N, {SITES[site][1]:.2f}° E).")
     t = st.columns(5)
-    who = ", ".join(lab(m) for m in chosen)
+    who = ", ".join(lab(m) for m in shown)
     t[0].metric(f"Now: {sea_state(hs0).lower()}", f"{hs0:.2f} m", help="Significant wave height at the forecast time")
     t[1].metric(f"In 24 h: {sea_state(ens[24]).lower()}", f"{ens[24]:.2f} m", f"{ens[24] - hs0:+.2f} m", delta_color="off",
                 help=f"Mean of {who}; change from now")
@@ -304,7 +319,7 @@ def page_live():
     if len(future):
         fig.add_trace(go.Scatter(x=future.index, y=future.values, name="Numerical wave model forecast (ECMWF WAM)",
                                  line=dict(color="#8f8e88", width=2, dash="dot")))
-    for m in chosen:
+    for m in shown:
         lead = [0] + H
         times = [origin + pd.Timedelta(hours=h) for h in lead]
         vals = [hs0] + [float(fc.loc[m, h]) for h in H]
@@ -324,16 +339,20 @@ def page_live():
     fig.update_layout(height=470, yaxis_title="Significant wave height Hs (m)", xaxis_title="Time (UTC)",
                       hovermode="x unified", legend=dict(orientation="h", y=-0.18))
     show(fig, "live_chart")
-    st.caption("Error bars: ±1 RMSE of each model at that lead time when run on these live inputs (Oct–Dec 2024 check, "
-               "below). The 6 h value leans almost entirely on the current wave height; trust 12–72 h more.")
+    st.caption("Error bars: ±1 RMSE of each model at that lead time on live inputs (original models: Oct–Dec 2024 check, "
+               "below; retrained model: its last-30-day score). The 6 h value of the original models leans almost "
+               "entirely on the current wave height; trust 12–72 h more.")
+    if rt is not None and back:
+        st.info("The retrained model is hidden in a replay: it was trained on data up to now, so it has already seen "
+                "what happened after this forecast time. Set the slider to 0 to see its forecast.")
 
     rows = []
     for h in H:
         vt = origin + pd.Timedelta(hours=h)
         r = {"Lead time": f"+{h} h", "Valid (UTC)": f"{vt:%d %b %H:00}", "Valid (IST)": f"{vt + ist:%d %b %H:%M}"}
-        for m in chosen:
+        for m in shown:
             r[f"{lab(m)} (m)"] = round(float(fc.loc[m, h]), 2)
-        r["± error (m)"] = round(float(np.nanmean([band.get((m, h), np.nan) for m in chosen])), 2)
+        r["± error (m)"] = round(float(np.nanmean([band.get((m, h), np.nan) for m in shown])), 2)
         r["Sea state"] = sea_state(float(ens[h]))
         num = raw["era5_swh"].get(vt, np.nan)
         r["ECMWF WAM (m)"] = round(float(num), 2) if pd.notna(num) else None
@@ -344,6 +363,69 @@ def page_live():
     if back:
         tab = tab.drop(columns=["ECMWF WAM (m)"])
     table(tab, hide_index=True)
+
+    # ---- retrain on the latest data
+    st.divider()
+    st.subheader("Retrain on the latest data")
+    st.markdown("Retrain LightGBM from scratch on this site's most recent hourly history from the same live source, "
+                "with the settings tuned in the thesis and the same leakage rules. The last 30 days are held back to "
+                "score the retrained model against the original one before its forecast is added above.")
+    c1, c2, c3 = st.columns([1.2, 0.9, 1.5])
+    span = {"Last year": 1, "Last 2 years": 2, "Last 4 years": 4}
+    years = span[c1.selectbox("Training history", list(span), index=1, key="rt_years")]
+    clicked = c2.button("Retrain now", type="primary", key="rt_button", use_container_width=True)
+    if rt is not None:
+        c3.button("Discard the retrained model", key="rt_reset",
+                  on_click=lambda: st.session_state.get("retrained", {}).pop(site, None))
+    if clicked:
+        from bobswh.live import retrain_lightgbm
+        until = now.floor("1h")
+        start = (until - pd.DateOffset(years=years)).strftime("%Y-%m-%d")
+        try:
+            with st.status(f"Retraining LightGBM for {site}…", expanded=True) as status:
+                st.write(f"Downloading {years} year{'s' if years > 1 else ''} of hourly history ({start} to now)…")
+                hist_raw = fetch_history(site, start, until.strftime("%Y-%m-%d"))
+                st.write(f"Building features and training one model per lead time on {len(hist_raw):,} hours…")
+                orig = load_tree_models(site)["lightgbm"]
+                res = retrain_lightgbm(hist_raw, orig.feature_names_, D["params"][f"{site}|lightgbm"]["params"],
+                                       original=orig, until=until, n_jobs=2)
+                st.write(f"Scored on the last 30 days ({res.n_eval} forecasts) and refitted on all data up to {until:%d %b %H:00} UTC.")
+                status.update(label=f"Retrained LightGBM for {site}", state="complete", expanded=False)
+        except Exception as e:
+            st.error(f"Retraining failed: {e}")
+        else:
+            st.session_state.setdefault("retrained", {})[site] = {
+                "model": res.model, "scores": res.scores, "years": years, "until": until, "n_fit": res.n_fit,
+                "n_eval": res.n_eval, "eval_start": res.eval_start, "eval_end": res.eval_end, "rounds": res.best_rounds}
+            st.rerun()
+    if rt is not None:
+        sc = rt["scores"]
+        def vs_original(h):
+            d = 100 * (sc.loc[h, "Retrained on live data"] / sc.loc[h, "Original (trained on ERA5)"] - 1)
+            return f"{abs(d):.0f}% {'lower' if d < 0 else 'higher'} at {h} h"
+        st.success(f"Retrained at {rt['until']:%d %b %Y %H:00} UTC on the last {rt['years']} year"
+                   f"{'s' if rt['years'] > 1 else ''} ({rt['n_fit']:,} training samples). On the held-back last 30 days "
+                   f"({rt['eval_start']:%d %b} to {rt['eval_end']:%d %b}, {rt['n_eval']} forecasts) its error is "
+                   f"{vs_original(24)} and {vs_original(72)} than the original model's. "
+                   "Its forecast is the violet line in the chart above.")
+        left, right = st.columns([1.1, 1])
+        with left:
+            f4 = go.Figure()
+            for col, colr, dash in (("Retrained on live data", COLOR["lgbm_live"], "solid"),
+                                    ("Original (trained on ERA5)", COLOR["lightgbm"], "solid"),
+                                    ("Persistence", COLOR["persistence"], "dash")):
+                f4.add_trace(go.Scatter(x=sc.index, y=sc[col], name=col, mode="lines+markers",
+                                        line=dict(color=colr, width=3, dash=dash), marker=dict(size=8)))
+            f4.update_layout(height=320, xaxis=dict(title="Lead time (h)", tickvals=H), yaxis_title="RMSE, last 30 days (m)",
+                             legend=dict(orientation="h", y=-0.3))
+            show(f4, "rt_scores")
+        with right:
+            t2 = sc[["Retrained on live data", "Original (trained on ERA5)", "Persistence"]].round(3)
+            t2.columns = ["Retrained (m)", "Original (m)", "Persistence (m)"]
+            table(t2.rename_axis("Lead time (h)"))
+            st.caption("Boosting rounds per lead time (early stopping): " +
+                       ", ".join(f"{h} h: {n}" for h, n in zip(H, rt["rounds"])) +
+                       ". Kept for this browser session only; it is not saved.")
 
     with st.expander("Live inputs at the forecast time"):
         last = raw.loc[origin - pd.Timedelta(days=3):origin]

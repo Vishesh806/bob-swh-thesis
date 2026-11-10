@@ -15,6 +15,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -112,3 +113,102 @@ def live_forecast(models: Mapping[str, object], raw: pd.DataFrame, origin: pd.Ti
         first_x = x if first_x is None else first_x
     horizons = next(iter(models.values())).horizons_h
     return pd.DataFrame(rows, index=list(horizons)).T, first_x
+
+
+# ---------------------------------------------------------------- retraining on live-source data
+HIST_WEATHER_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+
+
+def fetch_open_meteo_history(lat: float, lon: float, start: str, end: str, timeout: float = 180) -> pd.DataFrame:
+    """Hourly history (UTC) from Open-Meteo's archives of the same operational sources, in the training column names.
+
+    The archives also hold forecast values for the rest of the end date, so callers must cut the frame at the
+    current hour before using it for training (``retrain_lightgbm`` takes ``until`` for this).
+    """
+    common = {"latitude": lat, "longitude": lon, "start_date": start, "end_date": end, "timezone": "GMT"}
+    marine = _get_json(MARINE_URL, {**common, "hourly": list(MARINE_VARS)}, timeout)
+    weather = _get_json(HIST_WEATHER_URL, {**common, "hourly": list(WEATHER_VARS), "wind_speed_unit": "ms"}, timeout)
+    return frame_from_json(marine, weather)
+
+
+def design_matrix(features: pd.DataFrame, feature_names: Sequence[str]) -> pd.DataFrame:
+    """Model inputs for every hour at once: column '{col}_lag{k}h' = features[col] shifted by k hours.
+
+    Row t equals ``inputs_at(features, feature_names, t)`` (checked in the tests).
+    """
+    cols = {}
+    for name in feature_names:
+        m = re.fullmatch(r"(.+)_lag(\d+)h", name)
+        if m is None:
+            raise ValueError(f"unexpected feature name {name!r}")
+        cols[name] = features[m.group(1)].shift(int(m.group(2)))
+    return pd.DataFrame(cols, index=features.index)
+
+
+def target_matrix(features: pd.DataFrame, horizons: Sequence[int], col: str = "era5_swh") -> pd.DataFrame:
+    """Targets for every origin: Hs at t + h for each lead time h (hourly index)."""
+    return pd.DataFrame({h: features[col].shift(-h) for h in horizons}, index=features.index)
+
+
+@dataclass
+class RetrainResult:
+    model: object                    # DirectMultiStepRegressor refitted on all data up to ``until``
+    scores: pd.DataFrame             # RMSE by lead time on the evaluation window: retrained / original / persistence
+    n_fit: int
+    n_eval: int
+    eval_start: pd.Timestamp
+    eval_end: pd.Timestamp
+    best_rounds: list[int]
+
+
+def retrain_lightgbm(raw: pd.DataFrame, feature_names: Sequence[str], params: Mapping, original=None,
+                     until: pd.Timestamp | None = None, eval_days: int = 30, es_days: int = 60,
+                     horizons: Sequence[int] = (6, 12, 24, 48, 72), seed: int = 42, n_jobs: int = -1) -> RetrainResult:
+    """Retrain the direct multi-step LightGBM on live-source history, with the same leakage rules as the thesis.
+
+    Blocks (by forecast origin, each containing all targets of its samples):
+        fit  : origins with t + 72 h before the early-stopping block
+        es   : the ``es_days`` before the evaluation block (chooses the number of boosting rounds per lead time)
+        eval : the last ``eval_days`` whose targets are already observed (scores retrained vs original vs persistence)
+    The returned model is then refitted on fit + es + eval with the rounds found by early stopping, i.e. on all
+    data up to ``until``. Hyperparameters are the ones tuned in the thesis (``params``), not re-tuned.
+    """
+    from .trees import DirectMultiStepRegressor, fit_estimator, make_estimator
+
+    until = pd.Timestamp.now(tz="UTC").tz_localize(None).floor("1h") if until is None else pd.Timestamp(until)
+    hist = raw[raw.index <= until].ffill(limit=3)          # never train on values after `until` (they are forecasts)
+    feats = FeatureEngineer().transform(hist)
+    X, Y = design_matrix(feats, feature_names), target_matrix(feats, horizons)
+    ok = X.notna().all(axis=1) & Y.notna().all(axis=1)
+    X, Y = X[ok], Y[ok]
+    hmax = pd.Timedelta(hours=max(horizons))
+    last_origin = X.index[-1]                             # its 72 h target is the last observed hour
+    eval_start = last_origin - pd.Timedelta(days=eval_days)
+    es_start = eval_start - hmax - pd.Timedelta(days=es_days)
+    is_eval = X.index > eval_start
+    is_es = (X.index > es_start) & (X.index + hmax <= eval_start)
+    is_fit = X.index + hmax <= es_start
+    if is_fit.sum() < 1000:
+        raise ValueError(f"too little history to retrain ({int(is_fit.sum())} training samples); choose a longer period")
+
+    model = DirectMultiStepRegressor("lightgbm", horizons, params, max_rounds=3000, early_stopping_rounds=50,
+                                     seed=seed, n_jobs=n_jobs)
+    model.fit(X[is_fit], Y[is_fit], X[is_es], Y[is_es])
+    Xe, Ye = X[is_eval], Y[is_eval].to_numpy()
+    rmse = lambda p: np.sqrt(np.mean((np.asarray(p) - Ye) ** 2, axis=0))
+    scores = {"Retrained on live data": rmse(model.predict(Xe)),
+              "Persistence": rmse(np.repeat(Xe["era5_swh_lag0h"].to_numpy()[:, None], len(horizons), axis=1))}
+    if original is not None:
+        scores["Original (trained on ERA5)"] = rmse(original.predict(Xe))
+    scores = pd.DataFrame(scores, index=list(horizons)).rename_axis("horizon_h")
+
+    # refit on everything up to `until`, keeping each lead time's number of rounds
+    final = DirectMultiStepRegressor("lightgbm", horizons, params, seed=seed, n_jobs=n_jobs)
+    final.feature_names_ = list(X.columns)
+    for j, rounds in enumerate(model.best_iterations_):
+        est = make_estimator("lightgbm", params, max(int(rounds), 1), None, seed + j, n_jobs)
+        est, _ = fit_estimator(est, "lightgbm", X, Y.iloc[:, j].to_numpy())
+        final.models_.append(est)
+        final.best_iterations_.append(int(rounds))
+    return RetrainResult(final, scores, int(is_fit.sum()), int(is_eval.sum()), eval_start, last_origin + pd.Timedelta(0),
+                         list(model.best_iterations_))

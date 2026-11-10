@@ -50,7 +50,7 @@ Full results, significance tests and discussion are in Chapter 5 of the report.
 
 ## Interactive dashboard
 
-A Streamlit dashboard (`app/`) presents everything interactively: a **live forecast** for the next 72 h from the latest Open-Meteo data (the trained LightGBM and CatBoost models, with ECMWF's numerical wave forecast for comparison and a replay of recent forecasts), the data and the sites, the methodology and an
+A Streamlit dashboard (`app/`) presents everything interactively: a **live forecast** for the next 72 h from the latest Open-Meteo data (the trained LightGBM and CatBoost models, with ECMWF's numerical wave forecast for comparison, a replay of recent forecasts, and a button that retrains LightGBM on the latest 1–4 years of live-source data and scores it against the original on the last 30 days), the data and the sites, the methodology and an
 interactive view of the peak-weighted loss, a leaderboard of all seven models by metric, site and lead time (including
 accuracy rates within ±0.25 m and ±0.5 m), a forecast explorer, the test-period cyclones, extreme-sea scores,
 Diebold–Mariano significance tests, feature importance, LSTM training curves and the Optuna searches.
