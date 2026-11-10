@@ -248,7 +248,7 @@ SLIDES.append(dict(els=frame(18, "Trees or LSTM?",
     *card(6.8, 1.75, 5.9, 2.4, 2, "Seq2Seq LSTM", "Learns from raw sequences, one network for all horizons, consistent trajectories; hosts custom losses such as the peak loss"),
     rect(0.6, 4.4, 12.1, 2.35, NAVY, name="verdict"),
     text(0.9, 4.55, 11.5, 2.1, ["The trees benefit from feature engineering and tuning; the LSTM from its loss and architecture.",
-                                "Check at BD08: giving the LSTM the 17 physics features cut its RMSE by 3–6%, narrowing the gap; at BD11 the LSTM is already best at 48–72 h.",
+                                "Check at BD08: giving the LSTM the 17 physics features cut its RMSE by 2–6%, narrowing the gap; at BD11 the LSTM is already best at 48–72 h.",
                                 "For a fast, transparent operational baseline the trees are hard to beat; with buoy targets, forecast forcing and a GPU the LSTM has more headroom."],
          size=16, color=WHITE, spacing=10, name="verdict text"),
 ], notes="Be balanced: the comparison was done under a limited computing budget, which favours the cheaper trees."))
